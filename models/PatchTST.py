@@ -47,46 +47,109 @@ class Model(nn.Module):
         
         
         # model
+        self.context_window = context_window
+        self.multiscale_patch_lens = [8, 16, 32]
+        self.freq_gating = FrequencyGatingUnit(num_scales=len(self.multiscale_patch_lens))
+        backbone_kwargs = dict(
+            c_in=c_in,
+            context_window=context_window,
+            target_window=target_window,
+            max_seq_len=max_seq_len,
+            n_layers=n_layers,
+            d_model=d_model,
+            n_heads=n_heads,
+            d_k=d_k,
+            d_v=d_v,
+            d_ff=d_ff,
+            norm=norm,
+            attn_dropout=attn_dropout,
+            dropout=dropout,
+            act=act,
+            key_padding_mask=key_padding_mask,
+            padding_var=padding_var,
+            attn_mask=attn_mask,
+            res_attention=res_attention,
+            pre_norm=pre_norm,
+            store_attn=store_attn,
+            pe=pe,
+            learn_pe=learn_pe,
+            fc_dropout=fc_dropout,
+            head_dropout=head_dropout,
+            padding_patch=padding_patch,
+            pretrain_head=pretrain_head,
+            head_type=head_type,
+            individual=individual,
+            revin=revin,
+            affine=affine,
+            subtract_last=subtract_last,
+            verbose=verbose,
+            **kwargs,
+        )
+
         self.decomposition = decomposition
         if self.decomposition:
             self.decomp_module = series_decomp(kernel_size)
-            self.model_trend = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride, 
-                                  max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
-                                  n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
-                                  dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var, 
-                                  attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
-                                  pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
-                                  pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                  subtract_last=subtract_last, verbose=verbose, **kwargs)
-            self.model_res = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride, 
-                                  max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
-                                  n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
-                                  dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var, 
-                                  attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
-                                  pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
-                                  pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                  subtract_last=subtract_last, verbose=verbose, **kwargs)
+            self.model_trend = self._build_multiscale_backbones(backbone_kwargs, stride)
+            self.model_res = self._build_multiscale_backbones(backbone_kwargs, stride)
         else:
-            self.model = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride, 
-                                  max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
-                                  n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
-                                  dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var, 
-                                  attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
-                                  pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
-                                  pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                  subtract_last=subtract_last, verbose=verbose, **kwargs)
+            self.model = self._build_multiscale_backbones(backbone_kwargs, stride)
+
+    def _build_multiscale_backbones(self, backbone_kwargs, default_stride):
+        branches = nn.ModuleList()
+        for patch_len in self.multiscale_patch_lens:
+            patch_len = min(patch_len, self.context_window)
+            stride = max(1, min(default_stride, patch_len))
+            branches.append(PatchTST_backbone(patch_len=patch_len, stride=stride, **backbone_kwargs))
+        return branches
+
+    def _forward_multiscale(self, x, branches, weights):
+        branch_outputs = [branch(x) for branch in branches]
+        mixed_output = 0
+        for idx, branch_output in enumerate(branch_outputs):
+            mixed_output = mixed_output + branch_output * weights[:, idx].view(-1, 1, 1)
+        return mixed_output
     
     
     def forward(self, x):           # x: [Batch, Input length, Channel]
+        weights = self.freq_gating(x)
         if self.decomposition:
             res_init, trend_init = self.decomp_module(x)
             res_init, trend_init = res_init.permute(0,2,1), trend_init.permute(0,2,1)  # x: [Batch, Channel, Input length]
-            res = self.model_res(res_init)
-            trend = self.model_trend(trend_init)
+            res = self._forward_multiscale(res_init, self.model_res, weights)
+            trend = self._forward_multiscale(trend_init, self.model_trend, weights)
             x = res + trend
             x = x.permute(0,2,1)    # x: [Batch, Input length, Channel]
         else:
             x = x.permute(0,2,1)    # x: [Batch, Channel, Input length]
-            x = self.model(x)
+            x = self._forward_multiscale(x, self.model, weights)
             x = x.permute(0,2,1)    # x: [Batch, Input length, Channel]
         return x
+
+
+class FrequencyGatingUnit(nn.Module):
+    def __init__(self, num_scales:int):
+        super().__init__()
+        self.num_scales = num_scales
+        self.gate = nn.Sequential(
+            nn.Linear(2, 16),
+            nn.GELU(),
+            nn.Linear(16, num_scales)
+        )
+
+    def forward(self, x):
+        centered_x = x - x.mean(dim=1, keepdim=True)
+        fft_energy = torch.fft.rfft(centered_x, dim=1).abs().pow(2).mean(dim=-1)
+
+        n_freq_bins = fft_energy.shape[1]
+        split_idx = max(1, n_freq_bins // 2)
+        low_band = fft_energy[:, :split_idx].mean(dim=1)
+        high_band = fft_energy[:, split_idx:].mean(dim=1) if split_idx < n_freq_bins else low_band.new_zeros(low_band.shape)
+
+        total_energy = low_band + high_band + 1e-6
+        low_ratio = low_band / total_energy
+        high_ratio = high_band / total_energy
+        ratio_feature = torch.stack([low_ratio, high_ratio], dim=-1)
+
+        learned_logits = self.gate(ratio_feature)
+        high_freq_bias = torch.stack([high_ratio, torch.zeros_like(high_ratio), -high_ratio], dim=-1)
+        return torch.softmax(learned_logits + high_freq_bias, dim=-1)
