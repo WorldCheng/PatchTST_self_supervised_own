@@ -37,6 +37,11 @@ do
       --head_dropout 0\
       --patch_len 16\
       --stride 8\
+      --multiscale_patch_lens 8 16 32\
+      --multiscale_stride_ratio 2\
+      --channel_wise_gating 1\
+      --freq_feature_mode enhanced\
+      --freq_num_bands 4\
       --des 'Exp' \
       --train_epochs 100\
       --itr 1 --batch_size 128 --learning_rate 0.0001 >logs/LongForecasting/$model_name'_'$model_id_name'_'$seq_len'_'$pred_len.log 
