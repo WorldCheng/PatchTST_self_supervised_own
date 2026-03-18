@@ -21,6 +21,7 @@
 
 ```python
 outputs = self.model(batch_x)
+```
 
 #### 修改后
 当模型属于 TST / PatchTST 时：
@@ -30,3 +31,4 @@ outputs = self.model(batch_x)
 前向统一使用：
 ```python
 outputs = self.model(batch_x)
+```
