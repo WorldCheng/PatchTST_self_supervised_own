@@ -32,3 +32,43 @@ outputs = self.model(batch_x)
 ```python
 outputs = self.model(batch_x)
 ```
+### 2. 训练阶段取消每个 epoch 的 test
+#### 修改前
+每个 epoch 结束后都会执行：vali、test
+即每轮训练流程为：train + vali + test
+
+#### 修改后
+每个 epoch 结束后只执行：vali
+即改为：train + vali
+最终 test 只在训练完成、加载最佳模型后执行一次。
+#### 作用
+减少了每个 epoch 的额外评估开销，缩短了整体训练时间。
+
+### 3. 验证阶段改为在 GPU 上直接计算 loss
+#### 修改前
+vali() 中会先将 outputs 和 batch_y 搬到 CPU，再计算 loss。
+
+#### 修改后
+改为：
+在 GPU 上直接计算 loss = criterion(outputs, batch_y)
+仅保存 loss.item()
+
+#### 作用
+减少了不必要的 GPU 到 CPU 数据拷贝，提高了验证阶段效率。
+
+### 4. 补齐 AMP 混合精度支持
+在第一轮修改中，统一补齐了 train()、vali()、test() 的 AMP 路径。
+#### 训练阶段
+当开启 --use_amp 时：
+前向放在 autocast() 中执行
+反向传播使用 GradScaler
+
+#### 验证/测试阶段
+当开启 --use_amp 时：
+前向同样放在 autocast() 中执行
+不使用 GradScaler
+
+#### 作用
+在 CUDA 环境下可实现：
+更快的训练速度
+更低的显存占用
