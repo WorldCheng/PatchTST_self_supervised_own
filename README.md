@@ -24,3 +24,4 @@ python run_longExp.py --is_training 1 --model_id demo --model PatchTST \
   --freq_feature_mode basic \
   --freq_num_bands 3
 ```
+增加了多尺度patch机制
