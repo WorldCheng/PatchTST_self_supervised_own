@@ -1,26 +1,32 @@
-# PatchTST_self_supervised_own
+# 第一轮修改说明
 
-**多尺度与频域配置示例**
-下面示例基于 `run_longExp.py`。多尺度参数使用空格分隔的列表形式。
+## 修改目标
+第一轮修改的目标是：**在不改动 PatchTST 模型结构的前提下，减少训练脚本中的无效计算，并补齐 AMP 混合精度支持**。
 
-自动联动 stride（根据 patch_len 自动生成 stride）:
-```bash
-python run_longExp.py --is_training 1 --model_id demo --model PatchTST \
-  --seq_len 96 --pred_len 96 --enc_in 7 --c_out 7 \
-  --multiscale_patch_lens 8 16 32 \
-  --multiscale_stride_ratio 2 \
-  --channel_wise_gating 1 \
-  --freq_feature_mode enhanced \
-  --freq_num_bands 4
-```
+---
 
-手动配置 stride（每个 patch_len 对应一个 stride）:
-```bash
-python run_longExp.py --is_training 1 --model_id demo --model PatchTST \
-  --seq_len 96 --pred_len 96 --enc_in 7 --c_out 7 \
-  --multiscale_patch_lens 8 16 32 \
-  --multiscale_strides 4 8 16 \
-  --channel_wise_gating 1 \
-  --freq_feature_mode basic \
-  --freq_num_bands 3
-```
+## 修改内容
+
+### 1. 为 PatchTST / TST 单独设置训练路径
+
+在 `exp_main.py` 的 `train()`、`vali()`、`test()` 中，新增了针对 `TST` 模型的单独分支。
+
+#### 修改前
+通用训练流程会统一执行：
+- 搬运 `batch_x_mark`
+- 搬运 `batch_y_mark`
+- 构造 `dec_inp`
+
+但对 PatchTST 来说，前向实际上只需要：
+
+```python
+outputs = self.model(batch_x)
+
+#### 修改后
+当模型属于 TST / PatchTST 时：
+-只搬运 batch_x、batch_y
+-不再搬运 batch_x_mark、batch_y_mark
+-不再构造 dec_inp
+前向统一使用：
+```python
+outputs = self.model(batch_x)
